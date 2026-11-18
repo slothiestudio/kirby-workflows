@@ -46,7 +46,7 @@ on:
 
 jobs:
   deploy:
-    uses: slothiestudio/kirby-workflows/.github/workflows/deploy.yml@v1.6.0
+    uses: slothiestudio/kirby-workflows/.github/workflows/deploy.yml@v1.6.1
     with:
       environment: preview
       php-version: "8.4"
@@ -72,7 +72,7 @@ on:
 
 jobs:
   deploy:
-    uses: slothiestudio/kirby-workflows/.github/workflows/deploy.yml@v1.6.0
+    uses: slothiestudio/kirby-workflows/.github/workflows/deploy.yml@v1.6.1
     with:
       environment: Live
       php-version: "8.4"
@@ -101,7 +101,7 @@ concurrency:
 
 jobs:
   check:
-    uses: slothiestudio/kirby-workflows/.github/workflows/check.yml@v1.6.0
+    uses: slothiestudio/kirby-workflows/.github/workflows/check.yml@v1.6.1
     permissions:
       contents: write
       pull-requests: write
@@ -126,7 +126,7 @@ concurrency:
 
 jobs:
   release-pr:
-    uses: slothiestudio/kirby-workflows/.github/workflows/release-pr.yml@v1.6.0
+    uses: slothiestudio/kirby-workflows/.github/workflows/release-pr.yml@v1.6.1
     permissions:
       contents: read
       pull-requests: write
@@ -168,7 +168,7 @@ Kirby license, `config.localhost.php`, and source/tooling files (`src/`, `assets
 
 ## Versions
 
-Sites pin a release (`@v1.6.0`), so a change here never reaches a site unreviewed.
+Sites pin a release (`@v1.6.1`), so a change here never reaches a site unreviewed.
 Dependabot (`package-ecosystem: github-actions`) opens a PR in each site for new releases.
 
 To release: merge to `main`, then tag `vX.Y.Z` and move `v1` (`git tag -f v1 && git push -f origin v1`).

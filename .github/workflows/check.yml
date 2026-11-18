@@ -189,6 +189,13 @@ jobs:
       - name: Merge PR
         run: gh pr merge "$PR" --merge --match-head-commit "$HEAD_SHA"
 
+      # Dependabot reuses the branch name when the same update comes again,
+      # and fails to open a PR while the old merged branch still exists.
+      - name: Delete merged branch
+        env:
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: gh api -X DELETE "repos/$GH_REPO/git/refs/heads/$HEAD_REF" || echo "::warning::Couldn't delete $HEAD_REF"
+
       # Merges made with the workflow token don't fire push events,
       # so start the deploy and the release PR update directly.
       - name: Deploy
