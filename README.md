@@ -3,11 +3,14 @@
 Shared GitHub Actions workflows for slothiestudio's Kirby sites. Each site keeps
 four short caller files; checks, deploys and the release PR live here once.
 
-| Workflow         | What it does                                                                                                                                                                                       |
-| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `deploy.yml`     | Installs Composer (and optionally npm) dependencies and deploys over SSH with [ssh-deploy](https://github.com/slothiestudio/ssh-deploy). Clears Kirby's cache and the Staticache pages afterwards. |
-| `check.yml`      | Runs on pull requests: PHP lint, `npm run format:check`, a smoke test and/or Playwright. Auto-merges Dependabot patch groups and deploys them to preview.                                          |
-| `release-pr.yml` | Keeps one "Release: main → live" PR open with a changelog. Merging it deploys live.                                                                                                                |
+| Workflow         | What it does                                                                                                                                                       |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `deploy.yml`     | Installs Composer (and optionally npm) dependencies and deploys over SSH with [ssh-deploy](ssh-deploy/). Clears Kirby's cache and the Staticache pages afterwards. |
+| `check.yml`      | Runs on pull requests: PHP lint, `npm run format:check`, a smoke test and/or Playwright. Auto-merges Dependabot patch groups and deploys them to preview.          |
+| `release-pr.yml` | Keeps one "Release: main → live" PR open with a changelog. Merging it deploys live.                                                                                |
+
+The deploy step itself is the [`ssh-deploy`](ssh-deploy/) action in this repo (rsync over SSH),
+usable on its own as `slothiestudio/kirby-workflows/ssh-deploy@v1`.
 
 ## Site layout these workflows expect
 
@@ -43,7 +46,7 @@ on:
 
 jobs:
   deploy:
-    uses: slothiestudio/kirby-workflows/.github/workflows/deploy.yml@v1.0.0
+    uses: slothiestudio/kirby-workflows/.github/workflows/deploy.yml@v1.1.0
     with:
       environment: preview
       php-version: "8.4"
@@ -59,7 +62,7 @@ on:
 
 jobs:
   deploy:
-    uses: slothiestudio/kirby-workflows/.github/workflows/deploy.yml@v1.0.0
+    uses: slothiestudio/kirby-workflows/.github/workflows/deploy.yml@v1.1.0
     with:
       environment: Live
       php-version: "8.4"
@@ -80,7 +83,7 @@ concurrency:
 
 jobs:
   check:
-    uses: slothiestudio/kirby-workflows/.github/workflows/check.yml@v1.0.0
+    uses: slothiestudio/kirby-workflows/.github/workflows/check.yml@v1.1.0
     permissions:
       contents: write
       pull-requests: write
@@ -105,7 +108,7 @@ concurrency:
 
 jobs:
   release-pr:
-    uses: slothiestudio/kirby-workflows/.github/workflows/release-pr.yml@v1.0.0
+    uses: slothiestudio/kirby-workflows/.github/workflows/release-pr.yml@v1.1.0
     permissions:
       contents: read
       pull-requests: write
@@ -144,7 +147,7 @@ Kirby license, `config.localhost.php`, and source/tooling files (`src/`, `assets
 
 ## Versions
 
-Sites pin a release (`@v1.0.0`), so a change here never reaches a site unreviewed.
+Sites pin a release (`@v1.1.0`), so a change here never reaches a site unreviewed.
 Dependabot (`package-ecosystem: github-actions`) opens a PR in each site for new releases.
 
 To release: merge to `main`, then tag `vX.Y.Z` and move `v1` (`git tag -f v1 && git push -f origin v1`).

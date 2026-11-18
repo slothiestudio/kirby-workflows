@@ -81,7 +81,7 @@ jobs:
           npm run build
 
       - name: Deploy
-        uses: slothiestudio/ssh-deploy@v1
+        uses: slothiestudio/kirby-workflows/ssh-deploy@v1
         with:
           host: ${{ secrets.SERVER_URL }}
           username: ${{ secrets.USERNAME }}
