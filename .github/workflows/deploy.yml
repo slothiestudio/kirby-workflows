@@ -4,6 +4,9 @@ name: Deploy Kirby site
 # SSH with slothiestudio/ssh-deploy. Server credentials come from the caller's
 # GitHub environment: secrets SERVER_URL, USERNAME, SSH_KEY or PASSWORD
 # (optional SSH_PASSPHRASE, SSH_FINGERPRINT) and the variable SERVER_DIRECTORY.
+# The caller must pass the secrets by name (see the README): GitHub doesn't
+# hand secrets to a reusable workflow on its own, and `secrets: inherit` only
+# works when the caller is in the same organization.
 
 on:
   workflow_call:
@@ -31,6 +34,19 @@ on:
         required: false
         type: string
         default: ""
+    secrets:
+      SERVER_URL:
+        required: false
+      USERNAME:
+        required: false
+      SSH_KEY:
+        required: false
+      PASSWORD:
+        required: false
+      SSH_PASSPHRASE:
+        required: false
+      SSH_FINGERPRINT:
+        required: false
 
 jobs:
   deploy:
