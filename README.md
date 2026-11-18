@@ -67,6 +67,8 @@ name: LIVE Deploy website on push
 on:
   push:
     branches: ["live"]
+  # Started by the Dependabot auto-merge of live patches in check.yml.
+  workflow_dispatch:
 
 jobs:
   deploy:
