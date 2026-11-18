@@ -55,6 +55,11 @@ on:
         required: false
         type: string
         default: ""
+      preview-url:
+        description: Preview site URL, linked in the auto-merge email
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -183,12 +188,37 @@ jobs:
       - name: Update release PR
         run: gh workflow run release-pr.yml --ref main
 
-      # A comment that @mentions people makes GitHub notify them (email or app).
+      # A comment that @mentions people makes GitHub email them.
       - name: Notify
         if: inputs.notify != ''
         env:
           NOTIFY: ${{ inputs.notify }}
           TITLE: ${{ github.event.pull_request.title }}
+          PREVIEW_URL: ${{ inputs.preview-url }}
         run: |
           mentions=$(printf '%s\n' $NOTIFY | sed 's/^@*/@/' | tr '\n' ' ')
-          gh pr comment "$PR" --body "${mentions}Auto-merged **${TITLE}** into main and started the preview deploy. It reaches live only when the main → live release PR is merged."
+          # "chore(deps): bump x from 1.0.0 to 1.0.1 in the y group" -> "x from 1.0.0 to 1.0.1"
+          what=$(printf '%s' "$TITLE" | sed -E 's/^[a-z]+(\([^)]*\))?: //; s/^[Bb]ump //; s/ in the [^ ]+ group$//')
+          if [ -n "$PREVIEW_URL" ]; then
+            preview="Preview: $PREVIEW_URL (updated in a few minutes)"
+          else
+            preview="Preview: being deployed now"
+          fi
+          release=$(gh pr list --base live --head main --state open --json number --jq '.[0].number // empty')
+          if [ -n "$release" ]; then
+            live="Live: not changed. It goes live when you merge the release PR #$release."
+          else
+            live="Live: not changed. It goes live with the next main → live release PR."
+          fi
+          gh pr comment "$PR" --body-file - <<BODY
+          $mentions
+
+          **Updated automatically: $what**
+
+          Dependabot found a small bug-fix (patch) update. The checks passed, so it was merged into main.
+
+          - $preview
+          - $live
+
+          Nothing to do, unless something looks wrong on preview.
+          BODY
