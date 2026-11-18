@@ -2,6 +2,8 @@ name: Check Kirby site
 
 # Runs on pull requests: installs dependencies, lints, and tests the site.
 # Afterwards, Dependabot patch group PRs are merged and deployed to preview.
+# With `notify` set, those users get a plain-words comment (and so an email)
+# when Dependabot opens a PR, when a patch is auto-merged, and when checks fail.
 #
 # The caller must grant the permissions the auto-merge job needs:
 #   permissions:
@@ -221,4 +223,106 @@ jobs:
           - $live
 
           Nothing to do, unless something looks wrong on preview.
+          BODY
+
+  # When Dependabot opens a PR, say in plain words what it is and whether
+  # anyone needs to act. The @mentions make GitHub email the notify users.
+  announce:
+    name: Announce Dependabot PR
+    runs-on: ubuntu-latest
+    if: >-
+      inputs.notify != '' &&
+      github.event_name == 'pull_request' &&
+      github.event.action == 'opened' &&
+      github.event.pull_request.user.login == 'dependabot[bot]'
+    permissions:
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      PR: ${{ github.event.pull_request.number }}
+      BASE: ${{ github.event.pull_request.base.ref }}
+      HEAD_REF: ${{ github.event.pull_request.head.ref }}
+      NOTIFY: ${{ inputs.notify }}
+      TITLE: ${{ github.event.pull_request.title }}
+    steps:
+      - name: Comment
+        run: |
+          mentions=$(printf '%s\n' $NOTIFY | sed 's/^@*/@/' | tr '\n' ' ')
+          what=$(printf '%s' "$TITLE" | sed -E 's/^[a-z]+(\([^)]*\))?: //; s/^[Bb]ump //; s/ in the [^ ]+ group$//')
+
+          # Patch, minor or major: from the group name, else from the versions
+          kind=""
+          case "$TITLE" in
+            *-patch\ group*) kind=patch ;;
+            *-minor\ group*) kind=minor ;;
+          esac
+          if [ -z "$kind" ]; then
+            from=$(printf '%s' "$TITLE" | sed -nE 's/.* from v?([0-9][^ ]*) to v?([0-9][^ ]*).*/\1/p')
+            to=$(printf '%s' "$TITLE" | sed -nE 's/.* from v?([0-9][^ ]*) to v?([0-9][^ ]*).*/\2/p')
+            if [ -n "$from" ]; then
+              if [ "${from%%.*}" != "${to%%.*}" ]; then kind=major
+              elif [ "$(echo "$from" | cut -d. -f2)" != "$(echo "$to" | cut -d. -f2)" ]; then kind=minor
+              else kind=patch; fi
+            fi
+          fi
+
+          if [ "$BASE" = main ] && printf '%s' "$TITLE" | grep -q -- '-patch group'; then
+            body="$mentions
+
+          **Bug-fix update: $what**
+
+          This will be merged automatically once the checks pass. You'll get a second email when it's on preview.
+
+          Nothing to do."
+          else
+            case "$kind" in
+              major) label="major: may need changes to the site" ;;
+              minor) label="minor: new features, should be compatible" ;;
+              patch) label="bug fix" ;;
+              *) label="update" ;;
+            esac
+            case "$HEAD_REF" in
+              dependabot/github_actions/*) label="GitHub Actions: only affects the automated checks and deploys, not the site" ;;
+            esac
+            body="$mentions
+
+          **Needs your review: $what** ($label)
+
+          This one isn't merged automatically. Look at the release notes below in this PR, then merge it if it's fine. Merging deploys it to preview; it reaches live only through the main → live release PR."
+          fi
+          printf '%s\n' "$body" | gh pr comment "$PR" --body-file -
+
+  # A Dependabot PR whose checks failed is left open: say so, or nobody notices.
+  failed:
+    name: Report failed Dependabot PR
+    needs: check
+    runs-on: ubuntu-latest
+    if: >-
+      failure() &&
+      inputs.notify != '' &&
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.user.login == 'dependabot[bot]'
+    permissions:
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      PR: ${{ github.event.pull_request.number }}
+      NOTIFY: ${{ inputs.notify }}
+      TITLE: ${{ github.event.pull_request.title }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Comment
+        run: |
+          mentions=$(printf '%s\n' $NOTIFY | sed 's/^@*/@/' | tr '\n' ' ')
+          what=$(printf '%s' "$TITLE" | sed -E 's/^[a-z]+(\([^)]*\))?: //; s/^[Bb]ump //; s/ in the [^ ]+ group$//')
+          gh pr comment "$PR" --body-file - <<BODY
+          $mentions
+
+          **Update failed its checks: $what**
+
+          It wasn't merged, and the site is unchanged. See what broke: $RUN_URL
+
+          Fix it on this PR, or close it to skip this update.
           BODY
