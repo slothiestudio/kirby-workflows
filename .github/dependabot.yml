@@ -1,0 +1,7 @@
+version: 2
+updates:
+  # Actions used inside the shared workflows (checkout, setup-node, ...)
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly

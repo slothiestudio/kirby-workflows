@@ -1,0 +1,177 @@
+name: Check Kirby site
+
+# Runs on pull requests: installs dependencies, lints, and tests the site.
+# Afterwards, Dependabot patch group PRs are merged and deployed to preview.
+#
+# The caller must grant the permissions the auto-merge job needs:
+#   permissions:
+#     contents: write
+#     pull-requests: write
+#     actions: write
+
+on:
+  workflow_call:
+    inputs:
+      php-version:
+        description: PHP version; match the servers
+        required: true
+        type: string
+      php-lint:
+        description: Check PHP syntax in public_html/, site/ (without plugins) and server.php
+        required: false
+        type: boolean
+        default: true
+      node-build:
+        description: Run `npm run build` (e.g. Vite) after installing npm dependencies
+        required: false
+        type: boolean
+        default: false
+      node-version:
+        description: Node version
+        required: false
+        type: string
+        default: "24"
+      format-check:
+        description: Run `npm run format:check` (Prettier, Stylelint, ECS)
+        required: false
+        type: boolean
+        default: true
+      smoke-urls:
+        description: >
+          Paths that must load (HTTP < 400, redirects followed) on PHP's built-in server
+          via server.php, one per line. Empty skips the smoke test.
+        required: false
+        type: string
+        default: /panel
+      playwright:
+        description: Run the Playwright tests (`npm test`) in Chromium and WebKit
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Install and test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Get latest code
+        uses: actions/checkout@v7
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ inputs.php-version }}
+          extensions: gd, ctype, curl, mbstring, zip
+          tools: composer:v2
+
+      - name: Install composer dependencies
+        run: composer install --no-interaction --no-progress
+
+      - name: Lint PHP
+        if: inputs.php-lint
+        run: |
+          paths=""
+          for p in public_html site server.php; do [ -e "$p" ] && paths="$paths $p"; done
+          # shellcheck disable=SC2086
+          find $paths -name '*.php' -not -path 'site/plugins/*' -print0 | xargs -0 -n1 php -l
+
+      - name: Set up Node
+        if: inputs.node-build || inputs.format-check || inputs.playwright
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ inputs.node-version }}
+
+      - name: Install npm dependencies
+        if: inputs.node-build || inputs.format-check || inputs.playwright
+        run: npm ci
+
+      - name: Build frontend
+        if: inputs.node-build
+        run: npm run build
+
+      - name: Check formatting and lint
+        if: inputs.format-check
+        run: npm run format:check
+
+      - name: Smoke test
+        if: inputs.smoke-urls != ''
+        env:
+          SMOKE_URLS: ${{ inputs.smoke-urls }}
+        run: |
+          php -S localhost:8888 -t public_html server.php > server.log 2>&1 &
+          sleep 2
+          failed=0
+          while IFS= read -r path; do
+            path="$(echo "$path" | xargs)"
+            [ -z "$path" ] && continue
+            if curl -fsSL -o /dev/null "localhost:8888$path"; then
+              echo "ok   $path"
+            else
+              echo "::error::$path did not load"
+              failed=1
+            fi
+          done <<< "$SMOKE_URLS"
+          exit $failed
+
+      - name: Show server log
+        if: failure() && inputs.smoke-urls != ''
+        run: cat server.log || true
+
+      # Loads every page in a real browser and fails on JS errors, failed requests,
+      # broken images or broken interactions. See the site's tests/ folder.
+      - name: Install Playwright browsers
+        if: inputs.playwright
+        run: npx playwright install --with-deps chromium webkit
+
+      - name: Playwright tests
+        if: inputs.playwright
+        run: npm test
+
+      - name: Upload test report
+        if: failure() && inputs.playwright
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
+
+  # Merge Dependabot patch group PRs once the check above passes, then
+  # deploy to preview. Minors, majors, security PRs and GitHub Actions updates are
+  # left for manual review. `live` is never touched.
+  automerge:
+    name: Auto-merge Dependabot patches
+    needs: check
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      github.event.pull_request.base.ref == 'main' &&
+      contains(github.event.pull_request.title, '-patch group')
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      PR: ${{ github.event.pull_request.number }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: Merge PR
+        run: gh pr merge "$PR" --merge --match-head-commit "$HEAD_SHA"
+
+      # Merges made with the workflow token don't fire push events,
+      # so start the preview deploy and the release PR update directly.
+      - name: Deploy to preview
+        run: gh workflow run preview.yml --ref main
+
+      - name: Update release PR
+        run: gh workflow run release-pr.yml --ref main

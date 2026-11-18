@@ -1,0 +1,137 @@
+name: Deploy Kirby site
+
+# Installs Composer (and optionally npm) dependencies and deploys the site over
+# SSH with slothiestudio/ssh-deploy. Server credentials come from the caller's
+# GitHub environment: secrets SERVER_URL, USERNAME, SSH_KEY or PASSWORD
+# (optional SSH_PASSPHRASE, SSH_FINGERPRINT) and the variable SERVER_DIRECTORY.
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: GitHub environment holding the server secrets and SERVER_DIRECTORY
+        required: true
+        type: string
+      php-version:
+        description: PHP version used to install the Composer dependencies; match the server
+        required: true
+        type: string
+      node-build:
+        description: Run `npm ci` and `npm run build` before deploying
+        required: false
+        type: boolean
+        default: false
+      node-version:
+        description: Node version for the build
+        required: false
+        type: string
+        default: "24"
+      exclude:
+        description: Extra paths to exclude for this site or server, one per line
+        required: false
+        type: string
+        default: ""
+
+jobs:
+  deploy:
+    name: Deploy
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+
+    steps:
+      - name: Check server settings
+        env:
+          SERVER_URL: ${{ secrets.SERVER_URL }}
+          USERNAME: ${{ secrets.USERNAME }}
+          SSH_KEY: ${{ secrets.SSH_KEY }}
+          PASSWORD: ${{ secrets.PASSWORD }}
+          SERVER_DIRECTORY: ${{ vars.SERVER_DIRECTORY }}
+        run: |
+          missing=""
+          [ -n "$SERVER_URL" ] || missing="$missing SERVER_URL"
+          [ -n "$USERNAME" ] || missing="$missing USERNAME"
+          [ -n "$SSH_KEY$PASSWORD" ] || missing="$missing SSH_KEY/PASSWORD"
+          [ -n "$SERVER_DIRECTORY" ] || missing="$missing SERVER_DIRECTORY(variable)"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing in the '${{ inputs.environment }}' environment:$missing"
+            exit 1
+          fi
+
+      - name: Get latest code
+        uses: actions/checkout@v7
+
+      - name: Install composer dependencies
+        uses: php-actions/composer@v6
+        with:
+          php_version: ${{ inputs.php-version }}
+          php_extensions: gd ctype curl mbstring zip
+          version: 2.x
+          dev: no
+
+      - name: Set up Node
+        if: inputs.node-build
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ inputs.node-version }}
+
+      - name: Build frontend
+        if: inputs.node-build
+        run: |
+          npm ci
+          npm run build
+
+      - name: Deploy
+        uses: slothiestudio/ssh-deploy@v1
+        with:
+          host: ${{ secrets.SERVER_URL }}
+          username: ${{ secrets.USERNAME }}
+          target: ${{ vars.SERVER_DIRECTORY }}
+          # Auth: provide a key (preferred) or a password. Passphrase/fingerprint optional.
+          ssh-private-key: ${{ secrets.SSH_KEY }}
+          passphrase: ${{ secrets.SSH_PASSPHRASE }}
+          password: ${{ secrets.PASSWORD }}
+          fingerprint: ${{ secrets.SSH_FINGERPRINT }}
+          extra-exclude: |
+            # Live data: never push, never delete on the server
+            /content
+            /content-backup-*
+            /storage
+            /public_html/media
+            /site/config/.license
+            # Local-only config
+            /site/config/config.localhost.php
+            # Project source, tooling & tests: build-time only
+            /src
+            /assets
+            /bin
+            /tests
+            /test-results
+            /playwright-report
+            /playwright.config.js
+            /server.php
+            /vite.config.js
+            /ecs.php
+            /package.json
+            /package-lock.json
+            /composer.json
+            /composer.lock
+            /README.md
+            /.editorconfig
+            /.prettierrc
+            /.prettierignore
+            /.stylelintrc.json
+            /.stylelintignore
+            ${{ inputs.exclude }}
+          # Clear Kirby's cache (keep only the root index.html stub) and the
+          # Staticache pages (all of it: static/index.html is the cached homepage).
+          post-deploy: |
+            CACHE="${{ vars.SERVER_DIRECTORY }}/storage/cache"
+            if [ -d "$CACHE" ]; then
+              find "$CACHE" -mindepth 1 -maxdepth 1 ! -name index.html -exec rm -rf -- {} +
+              echo "Cleared Kirby cache at $CACHE"
+            else
+              echo "No cache directory at $CACHE; nothing to clear"
+            fi
+            STATIC="${{ vars.SERVER_DIRECTORY }}/public_html/static"
+            rm -rf -- "$STATIC"
+            echo "Cleared static pages at $STATIC"
