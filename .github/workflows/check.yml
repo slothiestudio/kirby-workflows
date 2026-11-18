@@ -48,6 +48,13 @@ on:
         required: false
         type: boolean
         default: false
+      notify:
+        description: >
+          GitHub usernames (space-separated, without @) to mention after a Dependabot
+          auto-merge. GitHub then emails them through their notification settings.
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -175,3 +182,13 @@ jobs:
 
       - name: Update release PR
         run: gh workflow run release-pr.yml --ref main
+
+      # A comment that @mentions people makes GitHub notify them (email or app).
+      - name: Notify
+        if: inputs.notify != ''
+        env:
+          NOTIFY: ${{ inputs.notify }}
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          mentions=$(printf '%s\n' $NOTIFY | sed 's/^@*/@/' | tr '\n' ' ')
+          gh pr comment "$PR" --body "${mentions}Auto-merged **${TITLE}** into main and started the preview deploy. It reaches live only when the main → live release PR is merged."
