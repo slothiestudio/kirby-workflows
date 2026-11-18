@@ -62,6 +62,11 @@ on:
         required: false
         type: string
         default: ""
+      live-url:
+        description: Live site URL, linked in the email after a live patch auto-merge
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -157,9 +162,10 @@ jobs:
             test-results/
           retention-days: 7
 
-  # Merge Dependabot patch group PRs once the check above passes, then
-  # deploy to preview. Minors, majors, security PRs and GitHub Actions updates are
-  # left for manual review. `live` is never touched.
+  # Merge Dependabot patch group PRs once the check above passes, then deploy:
+  # PRs into main go to preview, PRs into live (Dependabot target-branch: live)
+  # go straight to the live site. Minors, majors, security PRs and GitHub
+  # Actions updates are left for manual review.
   automerge:
     name: Auto-merge Dependabot patches
     needs: check
@@ -167,7 +173,7 @@ jobs:
     if: >-
       github.event_name == 'pull_request' &&
       github.event.pull_request.user.login == 'dependabot[bot]' &&
-      github.event.pull_request.base.ref == 'main' &&
+      (github.event.pull_request.base.ref == 'main' || github.event.pull_request.base.ref == 'live') &&
       contains(github.event.pull_request.title, '-patch group')
     permissions:
       contents: write
@@ -178,14 +184,20 @@ jobs:
       GH_REPO: ${{ github.repository }}
       PR: ${{ github.event.pull_request.number }}
       HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      BASE: ${{ github.event.pull_request.base.ref }}
     steps:
       - name: Merge PR
         run: gh pr merge "$PR" --merge --match-head-commit "$HEAD_SHA"
 
       # Merges made with the workflow token don't fire push events,
-      # so start the preview deploy and the release PR update directly.
-      - name: Deploy to preview
-        run: gh workflow run preview.yml --ref main
+      # so start the deploy and the release PR update directly.
+      - name: Deploy
+        run: |
+          if [ "$BASE" = live ]; then
+            gh workflow run live.yml --ref live
+          else
+            gh workflow run preview.yml --ref main
+          fi
 
       - name: Update release PR
         run: gh workflow run release-pr.yml --ref main
@@ -197,10 +209,26 @@ jobs:
           NOTIFY: ${{ inputs.notify }}
           TITLE: ${{ github.event.pull_request.title }}
           PREVIEW_URL: ${{ inputs.preview-url }}
+          LIVE_URL: ${{ inputs.live-url }}
         run: |
           mentions=$(printf '%s' "$NOTIFY" | tr -s ' ' '\n' | sed '/^$/d; s/^@*/@/' | tr '\n' ' ')
           # "chore(deps): bump x from 1.0.0 to 1.0.1 in the y group" -> "x from 1.0.0 to 1.0.1"
           what=$(printf '%s' "$TITLE" | sed -E 's/^[a-z]+(\([^)]*\))?: //; s/^[Bb]ump //; s/ in the [^ ]+ group$//')
+          if [ "$BASE" = live ]; then
+            site="${LIVE_URL:-the live site}"
+            gh pr comment "$PR" --body-file - <<BODY
+          $mentions
+
+          **Live site updated automatically: $what**
+
+          Dependabot found a small bug-fix (patch) update for the live site. The checks passed, so it was merged into live and is being deployed.
+
+          - Live: $site (updated in a few minutes)
+
+          Nothing to do, unless something looks wrong on the live site.
+          BODY
+            exit 0
+          fi
           if [ -n "$PREVIEW_URL" ]; then
             preview="Preview: $PREVIEW_URL (updated in a few minutes)"
           else
@@ -208,9 +236,9 @@ jobs:
           fi
           release=$(gh pr list --base live --head main --state open --json number --jq '.[0].number // empty')
           if [ -n "$release" ]; then
-            live="Live: not changed. It goes live when you merge the release PR #$release."
+            live="Live: not changed by this PR. Live gets its own patch PRs, and everything else on main goes live with the release PR #$release."
           else
-            live="Live: not changed. It goes live with the next main → live release PR."
+            live="Live: not changed by this PR. Live gets its own patch PRs, and everything else on main goes live with the next release PR."
           fi
           gh pr comment "$PR" --body-file - <<BODY
           $mentions
@@ -267,7 +295,15 @@ jobs:
             fi
           fi
 
-          if [ "$BASE" = main ] && printf '%s' "$TITLE" | grep -q -- '-patch group'; then
+          if [ "$BASE" = live ] && printf '%s' "$TITLE" | grep -q -- '-patch group'; then
+            body="$mentions
+
+          **Bug-fix update for the live site: $what**
+
+          This will be merged into live and deployed automatically once the checks pass. You'll get a second email when it's live.
+
+          Nothing to do."
+          elif [ "$BASE" = main ] && printf '%s' "$TITLE" | grep -q -- '-patch group'; then
             body="$mentions
 
           **Bug-fix update: $what**
